@@ -1,0 +1,16 @@
+{
+  "name": "discord-role-request-bot",
+  "version": "1.0.0",
+  "description": "westx team",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "deploy-commands": "node deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "express": "^4.19.2",
+    "dotenv": "^16.4.5"
+  }
+}
