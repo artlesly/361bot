@@ -61,7 +61,7 @@ client.once(Events.ClientReady, (c) => {
 function buildRequestMessage() {
   const embed = new EmbedBuilder()
     .setTitle('PRISSANA GANG [verify]')
-    .setDescription('```กดปุ่มด้านล่างเพื่อกรอกข้อมูล```')
+    .setDescription('```หากพบปัญหาในการใช้งาน PRISSANA GANG [verify] กรุณาติดต่อ kids```')
     .setColor(0x5865f2);
 
   if (SETUP_IMAGE_URL) {
@@ -109,7 +109,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setCustomId(NAME_INPUT_ID)
         .setLabel('name lastname')
         .setStyle(TextInputStyle.Short)
-        .setPlaceholder('name lastname yourname')
+        .setPlaceholder('name lastname ')
         .setRequired(true)
         .setMaxLength(100);
 
@@ -117,7 +117,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         .setCustomId(FB_INPUT_ID)
         .setLabel('link facebook profile')
         .setStyle(TextInputStyle.Short)
-        .setPlaceholder('link facebook profile https://www.facebook.com/yourprofile')
+        .setPlaceholder('https://www.facebook.com/yourprofile')
         .setRequired(true)
         .setMaxLength(300);
 
