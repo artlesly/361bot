@@ -13,6 +13,11 @@ const {
   Events,
   PermissionsBitField,
 } = require('discord.js');
+const {
+  joinVoiceChannel,
+  VoiceConnectionStatus,
+  entersState,
+} = require('@discordjs/voice');
 
 // ---------- ตั้งค่าจาก .env ----------
 const {
@@ -24,6 +29,10 @@ const {
   CREDIT_ICON_URL,
   PORT,
   ALLOWED_USER_IDS,
+  VOICE_CHANNEL_ID,       // ห้องเสียงที่ต้องการให้บอทเข้าไปอยู่ตลอด (โชว์ตัวในห้อง TALK)
+  RANDOM_MESSAGES,        // ข้อความสุ่ม คั่นด้วย | เช่น "ข้อความ1|ข้อความ2|ข้อความ3"
+  RANDOM_IMAGES,          // รูปสุ่ม คั่นด้วย , เช่น "url1,url2,url3"
+  ROTATE_INTERVAL_MINUTES, // ทุกกี่นาทีให้สุ่มข้อความ/รูปใหม่ (default 10 นาที)
 } = process.env;
 
 // แปลง ALLOWED_USER_IDS (คั่นด้วยจุลภาค) ให้เป็น array ของ user id ที่อนุญาตให้ใช้คำสั่ง /setup
@@ -31,6 +40,24 @@ const allowedUserIds = (ALLOWED_USER_IDS || '')
   .split(',')
   .map((id) => id.trim())
   .filter(Boolean);
+
+// แปลงข้อความสุ่ม / รูปสุ่มจาก .env เป็น array (ถ้าไม่ตั้งค่าไว้ จะมีค่า default ให้ 1 ตัว)
+const randomMessages = (RANDOM_MESSAGES || 'หากพบปัญหาในการใช้งาน PRISSANA GANG [verify] กรุณาติดต่อ kids')
+  .split('|')
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+const randomImages = (RANDOM_IMAGES || SETUP_IMAGE_URL || '')
+  .split(',')
+  .map((u) => u.trim())
+  .filter(Boolean);
+
+const rotateIntervalMs = (Number(ROTATE_INTERVAL_MINUTES) > 0 ? Number(ROTATE_INTERVAL_MINUTES) : 10) * 60 * 1000;
+
+function pickRandom(arr) {
+  if (!arr || arr.length === 0) return null;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 // ---------- เว็บเซิร์ฟเวอร์เล็กๆ ไว้ให้โฮสต์ ping เพื่อให้บอทออนไลน์ตลอด ----------
 const app = express();
@@ -43,7 +70,10 @@ app.listen(PORT || 3000, () => {
 
 // ---------- ตั้งค่าบอท ----------
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates, // จำเป็นสำหรับเข้าห้องเสียง
+  ],
 });
 
 const BUTTON_ID = 'request_role_button';
@@ -53,19 +83,69 @@ const FB_INPUT_ID = 'request_role_fb_input';
 const APPROVE_PREFIX = 'approve_request_';
 const DENY_PREFIX = 'deny_request_';
 
-client.once(Events.ClientReady, (c) => {
+// เก็บ reference ของข้อความ setup ล่าสุดที่ส่งไปแต่ละช่อง เพื่อไว้แก้ไขข้อความ/รูปแบบสุ่มเรื่อยๆ
+const activeSetupMessages = new Map(); // channelId -> messageId
+
+client.once(Events.ClientReady, async (c) => {
   console.log(`ล็อกอินสำเร็จในชื่อ ${c.user.tag}`);
+
+  // ---------- เข้าห้องเสียงอัตโนมัติตอนบอทออนไลน์ ----------
+  if (VOICE_CHANNEL_ID) {
+    await joinConfiguredVoiceChannel();
+  }
+
+  // ---------- เริ่มระบบสุ่มข้อความ/รูปในข้อความ setup ที่ส่งไปแล้ว ----------
+  setInterval(rotateAllActiveSetupMessages, rotateIntervalMs);
 });
 
-// ---------- ฟังก์ชันสร้าง Embed + ปุ่ม สำหรับส่งลงช่องขอรับยศ ----------
+// ---------- ฟังก์ชันเข้าห้องเสียงพร้อม reconnect อัตโนมัติถ้าหลุด ----------
+async function joinConfiguredVoiceChannel() {
+  try {
+    const channel = await client.channels.fetch(VOICE_CHANNEL_ID);
+    if (!channel || !channel.isVoiceBased()) {
+      console.error('VOICE_CHANNEL_ID ที่ตั้งไว้ไม่ใช่ห้องเสียง หรือหาไม่เจอ');
+      return;
+    }
+
+    const connection = joinVoiceChannel({
+      channelId: channel.id,
+      guildId: channel.guild.id,
+      adapterCreator: channel.guild.voiceAdapterCreator,
+      selfDeaf: false,
+      selfMute: false,
+    });
+
+    await entersState(connection, VoiceConnectionStatus.Ready, 15_000).catch(() => {});
+    console.log(`เข้าห้องเสียง ${channel.name} แล้ว`);
+
+    connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      console.log('หลุดจากห้องเสียง กำลังพยายามเชื่อมต่อใหม่...');
+      try {
+        await Promise.race([
+          entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+          entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+        ]);
+      } catch {
+        setTimeout(() => joinConfiguredVoiceChannel(), 5_000);
+      }
+    });
+  } catch (err) {
+    console.error('เข้าห้องเสียงไม่สำเร็จ:', err);
+  }
+}
+
+// ---------- ฟังก์ชันสร้าง Embed + ปุ่ม สำหรับส่งลงช่องขอรับยศ (สุ่มข้อความ/รูปทุกครั้งที่เรียก) ----------
 function buildRequestMessage() {
+  const description = pickRandom(randomMessages);
+  const image = pickRandom(randomImages);
+
   const embed = new EmbedBuilder()
     .setTitle('PRISSANA GANG [verify]')
-    .setDescription('```หากพบปัญหาในการใช้งาน PRISSANA GANG [verify] กรุณาติดต่อ kids```')
+    .setDescription('```' + description + '```')
     .setColor(0x5865f2);
 
-  if (SETUP_IMAGE_URL) {
-    embed.setImage(SETUP_IMAGE_URL);
+  if (image) {
+    embed.setImage(image);
   }
 
   if (CREDIT_TEXT) {
@@ -85,6 +165,27 @@ function buildRequestMessage() {
   return { embeds: [embed], components: [row] };
 }
 
+// ---------- สุ่มข้อความ/รูปใหม่ให้ข้อความ setup ที่เคยส่งไปแล้วทุกช่อง (เรียกซ้ำเรื่อยๆ ตามรอบเวลา) ----------
+async function rotateAllActiveSetupMessages() {
+  for (const [channelId, messageId] of activeSetupMessages.entries()) {
+    try {
+      const channel = await client.channels.fetch(channelId).catch(() => null);
+      if (!channel) {
+        activeSetupMessages.delete(channelId);
+        continue;
+      }
+      const message = await channel.messages.fetch(messageId).catch(() => null);
+      if (!message) {
+        activeSetupMessages.delete(channelId);
+        continue;
+      }
+      await message.edit({ ...buildRequestMessage() });
+    } catch (err) {
+      console.error(`สุ่มข้อความใหม่ในช่อง ${channelId} ไม่สำเร็จ:`, err);
+    }
+  }
+}
+
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     // 1) คำสั่ง /setup -> ส่งข้อความปุ่มลงช่องนี้ (ส่งแยกเป็นข้อความปกติ ไม่ให้ขึ้นป้าย "ใช้แล้ว /setup")
@@ -95,7 +196,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       await interaction.reply({ content: 'ส่งข้อความเรียบร้อยแล้ว', ephemeral: true });
-      await interaction.channel.send({ ...buildRequestMessage() });
+      const sentMessage = await interaction.channel.send({ ...buildRequestMessage() });
+
+      // จำข้อความนี้ไว้ เพื่อให้ระบบสุ่มข้อความ/รูปคอยอัปเดตให้เรื่อยๆ
+      activeSetupMessages.set(interaction.channel.id, sentMessage.id);
       return;
     }
 
