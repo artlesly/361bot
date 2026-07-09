@@ -9,8 +9,11 @@
     "deploy-commands": "node deploy-commands.js"
   },
   "dependencies": {
+    "@discordjs/voice": "^0.19.2",
     "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "dotenv": "^16.4.5"
+    "libsodium-wrappers": "^0.8.4",
+    "opusscript": "^0.1.1"
   }
 }
